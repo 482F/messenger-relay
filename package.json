@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "author": "482F <482F.git.mail@482f.net>",
   "scripts": {
-    "dev": "yarn run tsc && node dist/index.mjs"
+    "dev": "yarn run tsc && node dist/index.mjs",
+    "dev:http": "yarn run tsc && RUN_HTTP=true node dist/index.mjs"
   },
   "license": "MIT",
   "private": false,

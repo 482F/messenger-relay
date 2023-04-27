@@ -1,16 +1,20 @@
 import fs from 'node:fs/promises'
-import https from 'https'
 import WebSocket, { WebSocketServer } from 'ws'
 import crypto from 'node:crypto'
 
 function makeSha256(plain: string) {
-  return crypto.createHash('sha256').update(plain, 'utf-8').digest('hex')
+  const salt = '5E43f'
+  return crypto
+    .createHash('sha256')
+    .update(plain + salt, 'utf-8')
+    .digest('hex')
 }
 
 const defaultInfo = {
   port: 0,
   key: '',
   cert: '',
+  passwordHash: '',
 }
 type Info = typeof defaultInfo
 const info: unknown = JSON.parse(await fs.readFile('info.json', 'utf-8'))
@@ -40,18 +44,40 @@ if (!isInfo(info)) {
   throw new Error('info.json の中身が不正です')
 }
 
-const options: https.ServerOptions = {
-  key: await fs.readFile(info.key),
-  cert: await fs.readFile(info.cert),
-}
-
-const server = https.createServer(options)
+const server = await (async () => {
+  if (process.env.RUN_HTTP === 'true') {
+    const http = await import('node:http').then((m) => m.default)
+    return http.createServer()
+  } else {
+    const https = await import('https')
+    const options = {
+      key: await fs.readFile(info.key),
+      cert: await fs.readFile(info.cert),
+    }
+    return https.createServer(options)
+  }
+})()
 
 const wss = new WebSocketServer({ server })
 
 const clients: { [hex: string]: WebSocket.WebSocket } = {}
 
-wss.on('connection', function (currentWs, req) {
+wss.on('connection', async function (currentWs, req) {
+  const isPasswordCorrect = await new Promise((resolve) => {
+    currentWs.addEventListener('message', (e) => {
+      const message = e.data.toString()
+      const expectedMessage = `password: ${info.passwordHash}`
+
+      resolve(message === expectedMessage)
+    })
+  })
+  if (!isPasswordCorrect) {
+    currentWs.close()
+    return
+  }
+
+  currentWs.send(JSON.stringify({ sender: 'server', message: 'authenticated' }))
+
   const ip = req.socket.remoteAddress
   const id = makeSha256(ip ?? '') + Math.random()
   clients[id] = currentWs
@@ -70,9 +96,10 @@ wss.on('connection', function (currentWs, req) {
       ws.send(payload)
     }
   })
-  currentWs.on('close', function() {
+  currentWs.addEventListener('close', function () {
     delete clients[id]
   })
 })
 
 server.listen(info.port)
+console.log('ready')
